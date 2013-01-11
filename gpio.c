@@ -17,6 +17,8 @@
 #include <unistd.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <time.h>
+#include "dbg.h"
 
 #define PAGE_SIZE (4*1024)
 #define BLOCK_SIZE (4*1024)
@@ -53,6 +55,9 @@ volatile unsigned* pwm;
 #define PWM_RANGE  	(*(pwm + (0x10/4)))
 #define PWM_DATA 	(*(pwm + (0x14/4)))
 
+
+void init_lcd();
+void lcd_print(char* c, short line);
 void setup_io();
 
 void intHandler(int dummy) {
@@ -83,18 +88,16 @@ int main(int argc, char** argv)
 	setup_io();
 	signal(SIGINT, intHandler);
 
+	debug("setting up io pins");
 	INP_GPIO(17);
 	OUT_GPIO(17);
 
-	int last_value = 0;
-	bool on = false;
-
-	init_pwm();
+	//init_pwm();
 
 	int glow = 0;
 	int increment = 4;
 	
-	while (1) {
+	while (0) {
 		glow += increment;
 		increment++;
 		if (glow > 1024 || glow < 0) {
@@ -109,6 +112,23 @@ int main(int argc, char** argv)
 		//}
 
 		usleep(30000);
+	}
+
+	debug("initializing lcd");
+	init_lcd();
+	debug("writing to lcd");
+	lcd_print("Raspberry Pi :)", 1);
+
+	time_t t = time(NULL);
+	struct tm cur_time = *localtime(&t);
+	char time_str[19];
+
+	while (1) {
+		t = time(NULL);
+		cur_time = *localtime(&t);
+		strftime(time_str, 18, "%a %I:%M:%S %p", &cur_time);
+		lcd_print(time_str, 2);
+		sleep(1);
 	}
 
 	return 0;
@@ -145,18 +165,18 @@ void setup_io()
 			GPIO_BASE
 	);
 
-	pwm_map = (char*)mmap(
+	/*pwm_map = (char*)mmap(
 			NULL,
 			BLOCK_SIZE,
 			PROT_READ | PROT_WRITE,
 			MAP_SHARED,
 			mem_fd,
 			PWM_BASE
-	);
+	);*/
 
 	close(mem_fd);
 
-	if ((long)gpio_map < 0) {
+	if (gpio_map == MAP_FAILED) {
 		printf("mmap error %d\n", (int)gpio_map);
 		exit(-1);
 	}
@@ -170,3 +190,102 @@ void setup_io()
 	gpio = (volatile unsigned *)gpio_map;
 	pwm  = (volatile unsigned *)pwm_map;
 }
+
+#define DB4 	7   
+#define DB5	24
+#define DB6	9
+#define DB7	10
+#define RS	11
+#define E	25
+
+#define SET_OUTP(g, i)   \
+	if (i) { GPIO_SET = (1 << (g)); } \
+	else { GPIO_CLR = (1 << (g)); }
+
+void write_output(char i)
+{
+	i >>= 4;
+	debug("writing %x", i);
+	SET_OUTP(DB4, (i & 1));
+	SET_OUTP(DB5, (i & 2));
+	SET_OUTP(DB6, (i & 4));
+	SET_OUTP(DB7, (i & 8));
+	//sleep(3);
+}
+
+void nybble()
+{
+	SET_OUTP(E, 1);
+	usleep(1000);
+	SET_OUTP(E, 0);
+}
+
+void command(char i)
+{
+	debug("command 0x%x", i);
+	SET_OUTP(RS, 0);
+	write_output(i);
+	nybble();
+	i <<= 4;
+	write_output(i);
+	nybble();	
+}
+
+void lcd_write(char i)
+{
+	debug("writing character %c", i);
+	SET_OUTP(RS, 1);
+	write_output(i);
+	nybble();
+	i <<= 4;
+	write_output(i);
+	nybble();
+}
+
+void lcd_print(char* str, short line)
+{
+	command(0x80 | (line == 2 ? 0x40 : 0));
+
+	while (*str) {
+		lcd_write(*str++);
+	}
+}
+
+#define SETUP_OUT_PIN(g)  INP_GPIO(g); OUT_GPIO(g);
+
+void init_lcd()
+{
+	SETUP_OUT_PIN(DB4);
+	SETUP_OUT_PIN(DB5);
+	SETUP_OUT_PIN(DB6);
+	SETUP_OUT_PIN(DB7);
+	SETUP_OUT_PIN(RS);
+	SETUP_OUT_PIN(E);
+
+	SET_OUTP(E, 0);
+	SET_OUTP(RS, 0);
+	write_output(0);
+	//SET_OUTP(P3, 0);
+	usleep(100000);
+	write_output(0x30); // wake up
+	usleep(30000);
+	nybble();
+	usleep(10000);
+	nybble();
+	usleep(10000);
+	nybble();
+	usleep(10000);
+	sleep(1);
+	nybble();
+	write_output(0x20);  // 4-bit interface
+	nybble();
+	command(0x28);    // 4-bit / 2 lines 
+	command(0x10);	  // set cursor
+	command(0x0C);	  // display on, blinking cursor
+	command(0x01);
+	usleep(2000);
+	command(0x02);
+	usleep(2000);
+	command(0x06);    // entry mode set
+}
+
