@@ -1,3 +1,5 @@
+CFLAGS=-Wall -std=c99
 
 all: gpio
-gpio: lcd
+
+gpio: lcd.o
