@@ -1,7 +1,7 @@
 #ifndef __lcddefs_h__
 #define __lcddefs_h__
 
-#include <unistd.h>
+#include <unistd.h> // for usleep, refine if needed
 
 extern volatile unsigned* gpio;
 
